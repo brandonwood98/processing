@@ -54,7 +54,7 @@ public class Compiler {
    * @param sketch Sketch object to be compiled, used for placing exceptions
    * @param buildPath Where the temporary files live and will be built from.
    * @return true if successful.
-   * @throws RunnerException Only if there's a problem. Only then.
+   * @throws SketchException Only if there's a problem. Only then.
    */
   static public boolean compile(JavaBuild build) throws SketchException {
 
@@ -68,6 +68,7 @@ public class Compiler {
       //"-noExit",  // not necessary for ecj
       "-source", "1.7",
       "-target", "1.7",
+      "-encoding", "utf8",
       "-classpath", build.getClassPath(),
       "-nowarn", // we're not currently interested in warnings (works in ecj)
       "-d", build.getBinFolder().getAbsolutePath() // output the classes in the buildPath

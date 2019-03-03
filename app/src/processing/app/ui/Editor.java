@@ -3,7 +3,7 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyright (c) 2012-15 The Processing Foundation
+  Copyright (c) 2012-19 The Processing Foundation
   Copyright (c) 2004-12 Ben Fry and Casey Reas
   Copyright (c) 2001-04 Massachusetts Institute of Technology
 
@@ -319,6 +319,17 @@ public abstract class Editor extends JFrame implements RunnerListener {
       public BasicSplitPaneDivider createDefaultDivider() {
         status = new EditorStatus(this, Editor.this);
         return status;
+      }
+
+
+      @Override
+      public void finishDraggingTo(int location) {
+        super.finishDraggingTo(location);
+        // JSplitPane issue: if you only make the lower component visible at
+        // the last minute, its minmum size is ignored.
+        if (location > splitPane.getMaximumDividerLocation()) {
+          splitPane.setDividerLocation(splitPane.getMaximumDividerLocation());
+        }
       }
     });
 
@@ -870,13 +881,8 @@ public abstract class Editor extends JFrame implements RunnerListener {
     undoItem = Toolkit.newJMenuItem(undoAction = new UndoAction(), 'Z');
     menu.add(undoItem);
 
-    // Gotta follow them interface guidelines
-    // http://code.google.com/p/processing/issues/detail?id=363
-    if (Platform.isWindows()) {
-      redoItem = Toolkit.newJMenuItem(redoAction = new RedoAction(), 'Y');
-    } else {  // Linux and OS X
-      redoItem = Toolkit.newJMenuItemShift(redoAction = new RedoAction(), 'Z');
-    }
+    redoItem = new JMenuItem(redoAction = new RedoAction());
+    redoItem.setAccelerator(Toolkit.getKeyStrokeExt("menu.edit.redo"));
     menu.add(redoItem);
 
     menu.addSeparator();
@@ -945,7 +951,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
     });
     menu.add(item);
 
-    item = Toolkit.newJMenuItem(Language.text("menu.edit.comment_uncomment"), '/');
+    item = Toolkit.newJMenuItemExt("menu.edit.comment_uncomment");
     item.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
           handleCommentUncomment();
@@ -953,7 +959,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
     });
     menu.add(item);
 
-    item = Toolkit.newJMenuItem("\u2192 "+Language.text("menu.edit.increase_indent"), ']');
+    item = Toolkit.newJMenuItemExt("menu.edit.increase_indent");
     item.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
           handleIndentOutdent(true);
@@ -961,7 +967,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
     });
     menu.add(item);
 
-    item = Toolkit.newJMenuItem("\u2190 "+Language.text("menu.edit.decrease_indent"), '[');
+    item = Toolkit.newJMenuItemExt("menu.edit.decrease_indent");
     item.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
           handleIndentOutdent(false);
@@ -2222,7 +2228,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
         int last = Math.min(location + tabSize, textarea.getDocumentLength());
         textarea.select(location, last);
         // Don't eat code if it's not indented
-        if (textarea.getSelectedText().equals(tabString)) {
+        if (tabString.equals(textarea.getSelectedText())) {
           textarea.setSelectedText("");
         }
       }
@@ -2321,11 +2327,11 @@ public abstract class Editor extends JFrame implements RunnerListener {
     if (ref != null) {
       showReference(ref + ".html");
     } else {
-      String text = textarea.getSelectedText().trim();
-      if (text.length() == 0) {
+      String text = textarea.getSelectedText();
+      if (text == null) {
         statusNotice(Language.text("editor.status.find_reference.select_word_first"));
       } else {
-        statusNotice(Language.interpolate("editor.status.find_reference.not_available", text));
+        statusNotice(Language.interpolate("editor.status.find_reference.not_available", text.trim()));
       }
     }
   }
@@ -2479,7 +2485,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
       // on macosx, setting the destructive property places this option
       // away from the others at the lefthand side
       pane.putClientProperty("Quaqua.OptionPane.destructiveOption",
-                             new Integer(2));
+                             Integer.valueOf(2));
 
       JDialog dialog = pane.createDialog(this, null);
       dialog.setVisible(true);
@@ -2900,6 +2906,17 @@ public abstract class Editor extends JFrame implements RunnerListener {
 
     if (e instanceof SketchException) {
       SketchException re = (SketchException) e;
+
+      // Make sure something is printed into the console
+      // Status bar is volatile
+      if (!re.isStackTraceEnabled()) {
+        System.err.println(re.getMessage());
+      }
+
+      // Move the cursor to the line before updating the status bar, otherwise
+      // status message might get hidden by a potential message caused by moving
+      // the cursor to a line with warning in it
+
       if (re.hasCodeIndex()) {
         sketch.setCurrentCode(re.getCodeIndex());
       }
@@ -3066,9 +3083,9 @@ public abstract class Editor extends JFrame implements RunnerListener {
   }
 
 
-    public void highlight(Problem p) {
+  public void highlight(Problem p) {
     if (p != null) {
-      highlight(p.getTabIndex(), p.getStartOffset(), p.getStartOffset());
+      highlight(p.getTabIndex(), p.getStartOffset(), p.getStopOffset());
     }
   }
 

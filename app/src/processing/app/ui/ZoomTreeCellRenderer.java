@@ -3,7 +3,7 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyright (c) 2017 The Processing Foundation
+  Copyright (c) 2017-19 The Processing Foundation
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -22,7 +22,8 @@
 
 package processing.app.ui;
 
-import java.awt.Component;
+import java.awt.*;
+import java.util.Optional;
 
 import javax.swing.JTree;
 import javax.swing.tree.DefaultTreeCellRenderer;
@@ -33,10 +34,15 @@ import processing.app.Mode;
 public class ZoomTreeCellRenderer extends DefaultTreeCellRenderer {
 
   public ZoomTreeCellRenderer(Mode mode) {
-    //setFont(Toolkit.getSansFont(Toolkit.zoom(14), Font.PLAIN));
     setFont(mode.getFont("tree.font"));
   }
 
+  @Override
+  public Dimension getPreferredSize() {
+    return Optional.ofNullable(super.getPreferredSize())
+            .map(d -> new Dimension(d.width, (int) (d.height * 1.15f)))
+            .orElse(null);
+  }
 
   @Override
   public Component getTreeCellRendererComponent(JTree tree, Object value,
@@ -48,15 +54,9 @@ public class ZoomTreeCellRenderer extends DefaultTreeCellRenderer {
     // Adjust height for magnified displays. The font is scaled properly,
     // but the rows don't automatically use the scaled preferred size.
     // https://github.com/processing/processing/issues/4936
-    int high = getPreferredSize().height;
-    if (high != 0) {
-      // add 15% for a little more spacing.. Source Sans leading is short
-      high = (int) (high * 1.15f);
-      int current = getSize().height;
-      if (current != high) {
-        tree.setRowHeight(high);
-      }
-    }
+    // Using setRowHeight(0) to force using this cell renderer's preferred height
+    // https://github.com/processing/processing/issues/5246#issuecomment-379503233
+    tree.setRowHeight(0);
     return super.getTreeCellRendererComponent(tree, value, selected,
                                               expanded, leaf, row, hasFocus);
   }

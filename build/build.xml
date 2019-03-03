@@ -45,6 +45,7 @@
     <property name="jre.download.jdk" value="true" />
     <property name="jre.downloader" value="linux-arm32-vfp-hflt.tar.gz" />
     <property name="linux.dist" value="linux/processing-${version}-linux-armv6hf.tgz" />
+    <property name="launch4j.variant" value="linux-armv6hf" />
   </target>
   <target name="check-linux-arm64" if="linux-arm64">
     <property name="jre.download.jdk" value="true" />
@@ -70,11 +71,11 @@
             value="../../processing-docs/content/examples" />
 
   <property name="jdk.version" value="8" />
-  <property name="jdk.update" value="144" />
-  <property name="jdk.build" value="1" />
+  <property name="jdk.update" value="202" />
+  <property name="jdk.build" value="08" />
   <!-- See https://gist.github.com/P7h/9741922
        or http://stackoverflow.com/q/10268583 -->
-  <property name="jdk.hash" value="090f390dda5b47b9b721c7dfaa008135" />
+  <property name="jdk.hash" value="1961070e4c9b4e26a04e7f5a083f551e" />
 
   <property name="jdk.short" value="${jdk.version}u${jdk.update}" />
   <property name="jdk.esoteric" value="1.${jdk.version}.0_${jdk.update}" />
@@ -561,7 +562,7 @@
       <!-- no support for this with Java 7 from Oracle -->
       <!--<arch name="i386"/>-->
 
-      <bundledocument extensions="pde"
+      <bundledocument extensions="pde,pyde"
                       icon="macosx/document.icns"
                       name="Processing Source Code"
                       role="Editor">
@@ -798,11 +799,13 @@
 
     <property name="launch4j.dir"
               value="linux/work/modes/java/application/launch4j" />
+    <!-- this might be already overwritten by check-linux-arm32 -->
+    <property name="launch4j.variant" value="linux" />
 
     <!-- rename the version we need -->
-    <move file="${launch4j.dir}/bin/windres-linux"
+    <move file="${launch4j.dir}/bin/windres-${launch4j.variant}"
           tofile="${launch4j.dir}/bin/windres" />
-    <move file="${launch4j.dir}/bin/ld-linux"
+    <move file="${launch4j.dir}/bin/ld-${launch4j.variant}"
           tofile="${launch4j.dir}/bin/ld" />
 
     <!-- make executable (ant doesn't preserve) -->

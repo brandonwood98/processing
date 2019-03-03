@@ -272,7 +272,7 @@ public class PSurfaceFX implements PSurface {
           displayDevice = devices[displayNum - 1];
         } else {
           System.err.format("Display %d does not exist, " +
-                                "using the default display instead.%n", displayNum);
+                            "using the default display instead.%n", displayNum);
           for (int i = 0; i < devices.length; i++) {
             System.err.format("Display %d is %s%n", (i+1), devices[i]);
           }
@@ -858,14 +858,6 @@ public class PSurfaceFX implements PSurface {
       case NONE:
         // not currently handled
         break;
-    }
-
-    // If running on Mac OS, allow ctrl-click as right mouse.
-    // Verified to be necessary with Java 8u45.
-    if (PApplet.platform == PConstants.MACOSX &&
-        fxEvent.isControlDown() &&
-        button == PConstants.LEFT) {
-      button = PConstants.RIGHT;
     }
 
     //long when = nativeEvent.getWhen();  // from AWT

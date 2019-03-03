@@ -617,7 +617,7 @@ public class PGraphicsOpenGL extends PGraphics {
     format = ARGB;
     if (primary) {
       fbStack = new FrameBuffer[FB_STACK_DEPTH];
-      fontMap = new WeakHashMap<PFont, FontTexture>();
+      fontMap = new WeakHashMap<>();
       tessellator = new Tessellator();
     } else {
       tessellator = getPrimaryPG().tessellator;
@@ -1190,7 +1190,7 @@ public class PGraphicsOpenGL extends PGraphics {
     if (!polyBuffersCreated || polyBuffersContextIsOutdated()) {
       polyBuffersContext = pgl.getCurrentContext();
 
-      bufPolyVertex = new VertexBuffer(this, PGL.ARRAY_BUFFER, 3, PGL.SIZEOF_FLOAT);
+      bufPolyVertex = new VertexBuffer(this, PGL.ARRAY_BUFFER, 4, PGL.SIZEOF_FLOAT);
       bufPolyColor = new VertexBuffer(this, PGL.ARRAY_BUFFER, 1, PGL.SIZEOF_INT);
       bufPolyNormal = new VertexBuffer(this, PGL.ARRAY_BUFFER, 3, PGL.SIZEOF_FLOAT);
       bufPolyTexcoord = new VertexBuffer(this, PGL.ARRAY_BUFFER, 2, PGL.SIZEOF_FLOAT);
@@ -1561,13 +1561,14 @@ public class PGraphicsOpenGL extends PGraphics {
     }
     pgl.depthFunc(PGL.LEQUAL);
 
-    if (OPENGL_RENDERER.equals("VideoCore IV HW")) {
-      // Broadcom's VC IV driver is unhappy with either of these
-      // ignore for now
+    if (pgl.isES()) {
+      // neither GL_MULTISAMPLE nor GL_POLYGON_SMOOTH are part of GLES2 or GLES3
     } else if (smooth < 1) {
       pgl.disable(PGL.MULTISAMPLE);
     } else if (1 <= smooth) {
       pgl.enable(PGL.MULTISAMPLE);
+    }
+    if (!pgl.isES()) {
       pgl.disable(PGL.POLYGON_SMOOTH);
     }
 
@@ -1993,6 +1994,9 @@ public class PGraphicsOpenGL extends PGraphics {
 
   @Override
   public void textureWrap(int wrap) {
+    if (this.textureWrap != wrap) {
+      flush();
+    }
     this.textureWrap = wrap;
   }
 
@@ -3768,6 +3772,13 @@ public class PGraphicsOpenGL extends PGraphics {
   }
 
 
+  static protected void invTranslate(PMatrix2D matrix,
+                                     float tx, float ty) {
+    matrix.preApply(1, 0, -tx,
+                    0, 1, -ty);
+  }
+
+
   static protected float matrixScale(PMatrix matrix) {
     // Volumetric scaling factor that is associated to the given
     // transformation matrix, which is given by the absolute value of its
@@ -3853,8 +3864,8 @@ public class PGraphicsOpenGL extends PGraphics {
   }
 
 
-  static private void invRotate(PMatrix3D matrix, float angle,
-                                float v0, float v1, float v2) {
+  static protected void invRotate(PMatrix3D matrix, float angle,
+                                  float v0, float v1, float v2) {
     float c = PApplet.cos(-angle);
     float s = PApplet.sin(-angle);
     float t = 1.0f - c;
@@ -3863,6 +3874,11 @@ public class PGraphicsOpenGL extends PGraphics {
                     (t*v0*v1) + (s*v2), (t*v1*v1) + c, (t*v1*v2) - (s*v0), 0,
                     (t*v0*v2) - (s*v1), (t*v1*v2) + (s*v0), (t*v2*v2) + c, 0,
                     0, 0, 0, 1);
+  }
+
+
+  static protected void invRotate(PMatrix2D matrix, float angle) {
+    matrix.rotate(-angle);
   }
 
 
@@ -3904,6 +3920,11 @@ public class PGraphicsOpenGL extends PGraphics {
 
   static protected void invScale(PMatrix3D matrix, float x, float y, float z) {
     matrix.preApply(1/x, 0, 0, 0,  0, 1/y, 0, 0,  0, 0, 1/z, 0,  0, 0, 0, 1);
+  }
+
+
+  static protected void invScale(PMatrix2D matrix, float x, float y) {
+    matrix.preApply(1/x, 0, 0, 1/y, 0, 0);
   }
 
 
@@ -6408,9 +6429,16 @@ public class PGraphicsOpenGL extends PGraphics {
     if (tex == null || tex.contextIsOutdated()) {
       tex = addTexture(img);
       if (tex != null) {
+        boolean dispose = img.pixels == null;
         img.loadPixels();
         tex.set(img.pixels, img.format);
         img.setModified();
+        if (dispose) {
+          // We only used the pixels to load the image into the texture and the user did not request
+          // to load the pixels, so we should dispose the pixels array to avoid wasting memory
+          img.pixels = null;
+          img.loaded = false;
+        }
       }
     }
     return tex;
@@ -6772,16 +6800,14 @@ public class PGraphicsOpenGL extends PGraphics {
 //        quality = temp;
 //      }
     }
-    if (OPENGL_RENDERER.equals("VideoCore IV HW")) {
-      // Broadcom's VC IV driver is unhappy with either of these
-      // ignore for now
+    if (pgl.isES()) {
+      // neither GL_MULTISAMPLE nor GL_POLYGON_SMOOTH are part of GLES2 or GLES3
     } else if (smooth < 1) {
       pgl.disable(PGL.MULTISAMPLE);
     } else if (1 <= smooth) {
       pgl.enable(PGL.MULTISAMPLE);
     }
-    // work around runtime exceptions in Broadcom's VC IV driver
-    if (false == OPENGL_RENDERER.equals("VideoCore IV HW")) {
+    if (!pgl.isES()) {
       pgl.disable(PGL.POLYGON_SMOOTH);
     }
 
@@ -6795,6 +6821,9 @@ public class PGraphicsOpenGL extends PGraphics {
       } else {
         // offscreen surfaces are transparent by default.
         background(0x00 << 24 | (backgroundColor & 0xFFFFFF));
+
+        // Recreate offscreen FBOs
+        restartPGL();
       }
 
       // Sets the default projection and camera (initializes modelview).
@@ -6892,8 +6921,12 @@ public class PGraphicsOpenGL extends PGraphics {
 
     // overwrite the default shaders with vendor specific versions
     // if needed
-    if (OPENGL_RENDERER.equals("VideoCore IV HW") ||    // Broadcom's binary driver for Raspberry Pi
-      OPENGL_RENDERER.equals("Gallium 0.4 on VC4")) {   // Mesa driver for same hardware
+    if (OPENGL_RENDERER.equals("VideoCore IV HW")) {  // Broadcom's binary driver for Raspberry Pi
+        defLightShaderVertURL =
+          PGraphicsOpenGL.class.getResource("/processing/opengl/shaders/LightVert-brcm.glsl");
+        defTexlightShaderVertURL =
+          PGraphicsOpenGL.class.getResource("/processing/opengl/shaders/TexLightVert-brcm.glsl");
+    } else if (OPENGL_RENDERER.contains("VC4")) {     // Mesa driver for same hardware
         defLightShaderVertURL =
           PGraphicsOpenGL.class.getResource("/processing/opengl/shaders/LightVert-vc4.glsl");
         defTexlightShaderVertURL =
@@ -7142,7 +7175,7 @@ public class PGraphicsOpenGL extends PGraphics {
 
 
   static protected class AttributeMap extends HashMap<String, VertexAttribute> {
-    public ArrayList<String> names = new ArrayList<String>();
+    public ArrayList<String> names = new ArrayList<>();
     public int numComp = 0; // number of components for a single vertex
 
     @Override
@@ -7668,9 +7701,9 @@ public class PGraphicsOpenGL extends PGraphics {
       shininess = new float[PGL.DEFAULT_IN_VERTICES];
       edges = new int[PGL.DEFAULT_IN_EDGES][3];
 
-      fattribs = new HashMap<String, float[]>();
-      iattribs = new HashMap<String, int[]>();
-      battribs = new HashMap<String, byte[]>();
+      fattribs = new HashMap<>();
+      iattribs = new HashMap<>();
+      battribs = new HashMap<>();
 
       clear();
     }
@@ -9105,7 +9138,7 @@ public class PGraphicsOpenGL extends PGraphics {
     FloatBuffer polyShininessBuffer;
 
     // Generic attributes
-    HashMap<String, Buffer> polyAttribBuffers = new HashMap<String, Buffer>();
+    HashMap<String, Buffer> polyAttribBuffers = new HashMap<>();
 
     int polyIndexCount;
     int firstPolyIndex;
@@ -9160,9 +9193,9 @@ public class PGraphicsOpenGL extends PGraphics {
     float[] pointOffsets;
     short[] pointIndices;
 
-    HashMap<String, float[]> fpolyAttribs = new HashMap<String, float[]>();
-    HashMap<String, int[]> ipolyAttribs = new HashMap<String, int[]>();
-    HashMap<String, byte[]> bpolyAttribs = new HashMap<String, byte[]>();
+    HashMap<String, float[]> fpolyAttribs = new HashMap<>();
+    HashMap<String, int[]> ipolyAttribs = new HashMap<>();
+    HashMap<String, byte[]> bpolyAttribs = new HashMap<>();
 
     TessGeometry(PGraphicsOpenGL pg, AttributeMap attr, int mode) {
       this.pg = pg;

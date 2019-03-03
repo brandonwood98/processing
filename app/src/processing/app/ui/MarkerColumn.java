@@ -2,7 +2,8 @@
 
 /*
 Part of the Processing project - http://processing.org
-Copyright (c) 2012-16 The Processing Foundation
+
+Copyright (c) 2012-19 The Processing Foundation
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 2
@@ -60,7 +61,7 @@ public class MarkerColumn extends JPanel {
   private Color warningColor;
 
   // Stores error markers displayed PER TAB along the error bar.
-  private List<LineMarker> errorPoints = new ArrayList<LineMarker>();
+  private List<LineMarker> errorPoints = new ArrayList<>();
 
 
   public MarkerColumn(Editor editor, int height) {

@@ -1076,7 +1076,7 @@ public class Table {
     }
 
     Field[] fields = target.getDeclaredFields();
-    ArrayList<Field> inuse = new ArrayList<Field>();
+    ArrayList<Field> inuse = new ArrayList<>();
     for (Field field : fields) {
       String name = field.getName();
       if (getColumnIndex(name, false) != -1) {
@@ -2215,7 +2215,7 @@ public class Table {
     // only create this on first get(). subsequent calls to set the title will
     // also update this array, but only if it exists.
     if (columnIndices == null) {
-      columnIndices = new HashMap<String, Integer>();
+      columnIndices = new HashMap<>();
       for (int col = 0; col < columns.length; col++) {
         columnIndices.put(columnTitles[col], col);
       }
@@ -2428,9 +2428,12 @@ public class Table {
         }
       }
     }
+    // Need to increment before setRow(), because it calls ensureBounds()
+    // https://github.com/processing/processing/issues/5406
+    ++rowCount;
     setRow(insert, columnData);
-    rowCount++;
   }
+
 
   /**
    * @webref table:method
@@ -4195,8 +4198,8 @@ public class Table {
 
 
   static class HashMapBlows {
-    HashMap<String,Integer> dataToIndex = new HashMap<String, Integer>();
-    ArrayList<String> indexToData = new ArrayList<String>();
+    HashMap<String,Integer> dataToIndex = new HashMap<>();
+    ArrayList<String> indexToData = new ArrayList<>();
 
     HashMapBlows() { }
 
@@ -4255,7 +4258,7 @@ public class Table {
     void read(DataInputStream input) throws IOException {
       int count = input.readInt();
       //System.out.println("found " + count + " entries in category map");
-      dataToIndex = new HashMap<String, Integer>(count);
+      dataToIndex = new HashMap<>(count);
       for (int i = 0; i < count; i++) {
         String str = input.readUTF();
         //System.out.println(i + " " + str);
@@ -4330,7 +4333,7 @@ public class Table {
       }
 
       @Override
-      public float compare(int index1, int index2) {
+      public int compare(int index1, int index2) {
         int a = reverse ? order[index2] : order[index1];
         int b = reverse ? order[index1] : order[index2];
 
@@ -4338,13 +4341,24 @@ public class Table {
         case INT:
           return getInt(a, column) - getInt(b, column);
         case LONG:
-          return getLong(a, column) - getLong(b, column);
+          long diffl = getLong(a, column) - getLong(b, column);
+          return diffl == 0 ? 0 : (diffl < 0 ? -1 : 1);
         case FLOAT:
-          return getFloat(a, column) - getFloat(b, column);
+          float difff = getFloat(a, column) - getFloat(b, column);
+          return difff == 0 ? 0 : (difff < 0 ? -1 : 1);
         case DOUBLE:
-          return (float) (getDouble(a, column) - getDouble(b, column));
+          double diffd = getDouble(a, column) - getDouble(b, column);
+          return diffd == 0 ? 0 : (diffd < 0 ? -1 : 1);
         case STRING:
-          return getString(a, column).compareToIgnoreCase(getString(b, column));
+          String string1 = getString(a, column);
+          if (string1 == null) {
+            string1 = "";  // avoid NPE when cells are left empty
+          }
+          String string2 = getString(b, column);
+          if (string2 == null) {
+            string2 = "";
+          }
+          return string1.compareToIgnoreCase(string2);
         case CATEGORY:
           return getInt(a, column) - getInt(b, column);
         default:

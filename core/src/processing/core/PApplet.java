@@ -24,29 +24,40 @@
 
 package processing.core;
 
-// used by link()
-import java.awt.Desktop;
-import java.awt.DisplayMode;
-import java.awt.EventQueue;
-import java.awt.FileDialog;
+// dummy object for backwards compatibility, plus the select methods
 import java.awt.Frame;
+
+// before calling settings() to get displayWidth/Height
+import java.awt.DisplayMode;
+// handleSettings() and displayDensity()
 import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
+// used to present the fullScreen() warning about Spaces on OS X
+import javax.swing.JOptionPane;
+
+// inside runSketch() to warn users about headless
 import java.awt.HeadlessException;
-import java.awt.Image;
 import java.awt.Toolkit;
+
+// used by loadImage()
+import java.awt.Image;
 import java.awt.color.ColorSpace;
 import java.awt.image.BufferedImage;
-
-// used by loadImage() functions
 import javax.imageio.ImageIO;
 // allows us to remove our own MediaTracker code
 import javax.swing.ImageIcon;
+
 // used by selectInput(), selectOutput(), selectFolder()
+import java.awt.EventQueue;
+import java.awt.FileDialog;
 import javax.swing.JFileChooser;
+
+// set the look and feel, if specified
 import javax.swing.UIManager;
-// used to present the fullScreen() warning about Spaces on OS X
-import javax.swing.JOptionPane;
+
+// used by link()
+import java.awt.Desktop;
+
 // used by desktopFile() method
 import javax.swing.filechooser.FileSystemView;
 
@@ -62,7 +73,10 @@ import java.nio.charset.StandardCharsets;
 import java.text.*;
 import java.util.*;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
 import java.util.regex.*;
 import java.util.zip.*;
 
@@ -111,45 +125,25 @@ public class PApplet implements PConstants {
   static public final String javaVersionName =
     System.getProperty("java.version");
 
-//  /** Short name of Java version, i.e. 1.8. */
-//  static public final String javaVersionShort =
-//    //javaVersionName.substring(0, 3);
-//    javaVersionName.substring(0, javaVersionName.indexOf(".", 2));
-//    // can't use this one, it's 1.8.0 and breaks things
-//    //javaVersionName.substring(0, javaVersionName.indexOf("_"));
-
-  static public final int javaPlatform =
-    PApplet.parseInt(PApplet.split(javaVersionName, '.')[1]);
-//  static {
-//    try {
-//      javaPlatform = PApplet.split(javaVersionName, '.')[1];
-//    } catch (Exception e) {
-//      javaPlatform = "8";  // set a default in case
-//    }
-//  }
+  static public final int javaPlatform;
+  static {
+    String version = javaVersionName;
+    if (javaVersionName.startsWith("1.")) {
+      version = version.substring(2);
+      javaPlatform = parseInt(version.substring(0, version.indexOf('.')));
+    } else {
+      // Remove -xxx and .yyy from java.version (@see JEP-223)
+      javaPlatform = parseInt(version.replaceAll("-.*","").replaceAll("\\..*",""));
+    }
+  }
 
   /**
-   * Version of Java that's in use, whether 1.1 or 1.3 or whatever,
-   * stored as a float.
-   * <p>
-   * Note that because this is stored as a float, the values may not be
-   * <EM>exactly</EM> 1.3 or 1.4. The PDE will make 1.8 or whatever into
-   * a float automatically, so outside the PDE, make sure you're comparing
-   * against 1.3f or 1.4f, which will have the same amount of error
-   * (i.e. 1.40000001). This could just be a double, but since Processing
-   * only uses floats, it's safer as a float because specifying a double
-   * (with this narrow case especially) with the preprocessor is awkward.
-   * <p>
-   * @deprecated Java 10 is around the corner. Use javaPlatform when you need
-   * a number for comparisons, i.e. "if (javaPlatform >= 7)".
+   * Do not use; javaPlatform or javaVersionName are better options.
+   * For instance, javaPlatform is useful when you need a number for
+   * comparison, i.e. "if (javaPlatform >= 9)".
    */
   @Deprecated
-  public static final float javaVersion =
-    new Float(javaVersionName.substring(0, 3));
-//  public static final float javaVersion =
-//    new Float(javaVersionName.substring(0, javaVersionName.indexOf(".", 2))).floatValue();
-//  // Making this a String in 3.0, in anticipation of Java 10
-//  public static final String javaVersion = "1." + javaPlatform;
+  public static final float javaVersion = 1 + javaPlatform / 10f;
 
   /**
    * Current platform in use, one of the
@@ -566,6 +560,14 @@ public class PApplet implements PConstants {
    */
   public boolean mousePressed;
 
+  // MACOSX: CTRL + Left Mouse is converted to Right Mouse. This boolean keeps
+  // track of whether the conversion happened on PRESS, because we should report
+  // the same button during DRAG and on RELEASE, even though CTRL might have
+  // been released already. Otherwise the events are inconsistent, e.g.
+  // Left Pressed - Left Drag - CTRL Pressed - Right Drag - Right Released.
+  // See: https://github.com/processing/processing/issues/5672
+  private boolean macosxLeftButtonWithCtrlPressed;
+
 
   /** @deprecated Use a mouse event handler that passes an event instead. */
   @Deprecated
@@ -710,7 +712,7 @@ public class PApplet implements PConstants {
    * @see PApplet#frameRate(float)
    * @see PApplet#frameCount
    */
-  public float frameRate = 10;
+  public float frameRate = 60;
 
   protected boolean looping = true;
 
@@ -1404,7 +1406,10 @@ public class PApplet implements PConstants {
 
   /** Map of registered methods, stored by name. */
   HashMap<String, RegisteredMethods> registerMap =
-    new HashMap<String, PApplet.RegisteredMethods>();
+    new HashMap<>();
+
+  /** Lock when un/registering from multiple threads */
+  private final Object registerLock = new Object[0];
 
 
   class RegisteredMethods {
@@ -1547,16 +1552,17 @@ public class PApplet implements PConstants {
 
 
   private void registerNoArgs(String name, Object o) {
-    RegisteredMethods meth = registerMap.get(name);
-    if (meth == null) {
-      meth = new RegisteredMethods();
-      registerMap.put(name, meth);
-    }
     Class<?> c = o.getClass();
     try {
-      Method method = c.getMethod(name, new Class[] {});
-      meth.add(o, method);
-
+      Method method = c.getMethod(name);
+      synchronized (registerLock) {
+        RegisteredMethods meth = registerMap.get(name);
+        if (meth == null) {
+          meth = new RegisteredMethods();
+          registerMap.put(name, meth);
+        }
+        meth.add(o, method);
+      }
     } catch (NoSuchMethodException nsme) {
       die("There is no public " + name + "() method in the class " +
           o.getClass().getName());
@@ -1568,16 +1574,17 @@ public class PApplet implements PConstants {
 
 
   private void registerWithArgs(String name, Object o, Class<?> cargs[]) {
-    RegisteredMethods meth = registerMap.get(name);
-    if (meth == null) {
-      meth = new RegisteredMethods();
-      registerMap.put(name, meth);
-    }
     Class<?> c = o.getClass();
     try {
       Method method = c.getMethod(name, cargs);
-      meth.add(o, method);
-
+      synchronized (registerLock) {
+        RegisteredMethods meth = registerMap.get(name);
+        if (meth == null) {
+          meth = new RegisteredMethods();
+          registerMap.put(name, meth);
+        }
+        meth.add(o, method);
+      }
     } catch (NoSuchMethodException nsme) {
       die("There is no public " + name + "() method in the class " +
           o.getClass().getName());
@@ -1594,32 +1601,38 @@ public class PApplet implements PConstants {
 
 
   public void unregisterMethod(String name, Object target) {
-    RegisteredMethods meth = registerMap.get(name);
-    if (meth == null) {
-      die("No registered methods with the name " + name + "() were found.");
-    }
-    try {
+    synchronized (registerLock) {
+      RegisteredMethods meth = registerMap.get(name);
+      if (meth == null) {
+        die("No registered methods with the name " + name + "() were found.");
+      }
+      try {
 //      Method method = o.getClass().getMethod(name, new Class[] {});
 //      meth.remove(o, method);
-      meth.remove(target);
-    } catch (Exception e) {
-      die("Could not unregister " + name + "() for " + target, e);
+        meth.remove(target);
+      } catch (Exception e) {
+        die("Could not unregister " + name + "() for " + target, e);
+      }
     }
   }
 
 
   protected void handleMethods(String methodName) {
-    RegisteredMethods meth = registerMap.get(methodName);
-    if (meth != null) {
-      meth.handle();
+    synchronized (registerLock) {
+      RegisteredMethods meth = registerMap.get(methodName);
+      if (meth != null) {
+        meth.handle();
+      }
     }
   }
 
 
   protected void handleMethods(String methodName, Object[] args) {
-    RegisteredMethods meth = registerMap.get(methodName);
-    if (meth != null) {
-      meth.handle(args);
+    synchronized (registerLock) {
+      RegisteredMethods meth = registerMap.get(methodName);
+      if (meth != null) {
+        meth.handle(args);
+      }
     }
   }
 
@@ -2420,9 +2433,34 @@ public class PApplet implements PConstants {
 
     } else {  // frameCount > 0, meaning an actual draw()
       // update the current frameRate
-      double rate = 1000000.0 / ((now - frameRateLastNanos) / 1000000.0);
-      float instantaneousRate = (float) (rate / 1000.0);
-      frameRate = (frameRate * 0.9f) + (instantaneousRate * 0.1f);
+
+      // Calculate frameRate through average frame times, not average fps, e.g.:
+      //
+      // Alternating 2 ms and 20 ms frames (JavaFX or JOGL sometimes does this)
+      // is around 90.91 fps (two frames in 22 ms, one frame 11 ms).
+      //
+      // However, averaging fps gives us: (500 fps + 50 fps) / 2 = 275 fps.
+      // This is because we had 500 fps for 2 ms and 50 fps for 20 ms, but we
+      // counted them with equal weight.
+      //
+      // If we average frame times instead, we get the right result:
+      // (2 ms + 20 ms) / 2 = 11 ms per frame, which is 1000/11 = 90.91 fps.
+      //
+      // The counter below uses exponential moving average. To do the
+      // calculation, we first convert the accumulated frame rate to average
+      // frame time, then calculate the exponential moving average, and then
+      // convert the average frame time back to frame rate.
+      {
+        // Get the frame time of the last frame
+        double frameTimeSecs = (now - frameRateLastNanos) / 1e9;
+        // Convert average frames per second to average frame time
+        double avgFrameTimeSecs = 1.0 / frameRate;
+        // Calculate exponential moving average of frame time
+        final double alpha = 0.05;
+        avgFrameTimeSecs = (1.0 - alpha) * avgFrameTimeSecs + alpha * frameTimeSecs;
+        // Convert frame time back to frames per second
+        frameRate = (float) (1.0 / avgFrameTimeSecs);
+      }
 
       if (frameCount != 0) {
         handleMethods("pre");
@@ -2644,8 +2682,27 @@ public class PApplet implements PConstants {
       mouseY = event.getY();
     }
 
+    int button = event.getButton();
+
+    // If running on Mac OS, allow ctrl-click as right mouse.
+    if (PApplet.platform == PConstants.MACOSX && event.getButton() == PConstants.LEFT) {
+      if (action == MouseEvent.PRESS && event.isControlDown()) {
+        macosxLeftButtonWithCtrlPressed = true;
+      }
+      if (macosxLeftButtonWithCtrlPressed) {
+        button = PConstants.RIGHT;
+        event = new MouseEvent(event.getNative(), event.getMillis(),
+                               event.getAction(), event.getModifiers(),
+                               event.getX(), event.getY(),
+                               button, event.getCount());
+      }
+      if (action == MouseEvent.RELEASE) {
+        macosxLeftButtonWithCtrlPressed = false;
+      }
+    }
+
     // Get the (already processed) button code
-    mouseButton = event.getButton();
+    mouseButton = button;
 
     /*
     // Compatibility for older code (these have AWT object params, not P5)
@@ -3485,7 +3542,7 @@ public class PApplet implements PConstants {
    * method, which uses the operating system's launcher to open the files.
    * It's always a good idea to use a full path to the executable here.
    * <pre>
-   * exec("/usr/bin/say", "-v", "Pipe Organ", "welcome to the command line");
+   * exec("/usr/bin/say", "welcome to the command line");
    * </pre>
    * Or if you want to wait until it's completed, something like this:
    * <pre>
@@ -3503,7 +3560,39 @@ public class PApplet implements PConstants {
     try {
       return Runtime.getRuntime().exec(args);
     } catch (Exception e) {
-      throw new RuntimeException("Could not open " + join(args, ' '), e);
+      throw new RuntimeException("Exception while attempting " + join(args, ' '), e);
+    }
+  }
+
+
+  static class LineThread extends Thread {
+    InputStream input;
+    StringList output;
+
+
+    LineThread(InputStream input, StringList output) {
+      this.input = input;
+      this.output = output;
+      start();
+    }
+
+    @Override
+    public void run() {
+      // It's not sufficient to use BufferedReader, because if the app being
+      // called fills up stdout or stderr to quickly, the app will hang.
+      // Instead, write to a byte[] array and then parse it once finished.
+      try {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        saveStream(baos, input);
+        BufferedReader reader =
+          createReader(new ByteArrayInputStream(baos.toByteArray()));
+        String line;
+        while ((line = reader.readLine()) != null) {
+          output.append(line);
+        }
+      } catch (IOException e) {
+        throw new RuntimeException(e);
+      }
     }
   }
 
@@ -3524,25 +3613,55 @@ public class PApplet implements PConstants {
    */
   static public int exec(StringList stdout, StringList stderr, String... args) {
     Process p = exec(args);
-    int result = -1;
-    try {
-      BufferedReader out = createReader(p.getInputStream());
-      BufferedReader err = createReader(p.getErrorStream());
-      result = p.waitFor();
+
+    Thread outThread = new LineThread(p.getInputStream(), stdout);
+    Thread errThread = new LineThread(p.getErrorStream(), stderr);
+    /*
+    final InputStream err = p.getErrorStream();
+    final InputStream out = p.getInputStream();
+    Thread outThread = new Thread(() ->  {
+      ByteArrayOutputStream baos = new ByteArrayOutputStream();
       String line;
-      while ((line = out.readLine()) != null) {
-        stdout.append(line);
+      try {
+        saveStream(baos, out);
+        BufferedReader err2 = createReader(new ByteArrayInputStream(baos.toByteArray()));
+        while ((line = err2.readLine()) != null) {
+          stdout.append(line);
+        }
+      } catch (IOException e) {
+        e.printStackTrace();
+        throw new RuntimeException(e);
       }
-      while ((line = err.readLine()) != null) {
-        stderr.append(line);
+    });
+    outThread.start();
+
+    Thread errThread = new Thread(() ->  {
+      ByteArrayOutputStream baos = new ByteArrayOutputStream();
+      String line;
+      try {
+        saveStream(baos, err);
+        BufferedReader err2 = createReader(new ByteArrayInputStream(baos.toByteArray()));
+        while ((line = err2.readLine()) != null) {
+          stderr.append(line);
+        }
+      } catch (IOException e) {
+        e.printStackTrace();
+        throw new RuntimeException(e);
       }
-    } catch (IOException e) {
-      e.printStackTrace();
+    });
+    errThread.start();
+    */
+
+    try {
+      int result = p.waitFor();
+      outThread.join();
+      errThread.join();
+      return result;
 
     } catch (InterruptedException e) {
-      // can be safely ignored
+      // Throwing the exception here because we can't give a valid 'result'
+      throw new RuntimeException(e);
     }
-    return result;
   }
 
 
@@ -3714,8 +3833,7 @@ public class PApplet implements PConstants {
     if (platform == MACOSX) {
       try {
         final String td = "processing.core.ThinkDifferent";
-        final Class<?> thinkDifferent =
-          Thread.currentThread().getContextClassLoader().loadClass(td);
+        final Class<?> thinkDifferent = getClass().getClassLoader().loadClass(td);
         thinkDifferent.getMethod("cleanup").invoke(null);
       } catch (Exception e) {
         e.printStackTrace();
@@ -5280,7 +5398,6 @@ public class PApplet implements PConstants {
 
   /**
    * @see #noiseDetail(int)
-   * @param lod number of octaves to be used by the noise
    * @param falloff falloff factor for each octave
    */
   public void noiseDetail(int lod, float falloff) {
@@ -5382,9 +5499,10 @@ public class PApplet implements PConstants {
    */
   public PImage loadImage(String filename, String extension) { //, Object params) {
 
-    // await... has to run on the main thread, because P2D and P3D call GL functions
-    // If this runs on background, requestImage() already called await... on the main thread
-    if (g != null && !Thread.currentThread().getName().startsWith(ASYNC_IMAGE_LOADER_THREAD_PREFIX)) {
+    // awaitAsyncSaveCompletion() has to run on the main thread, because P2D
+    // and P3D call GL functions. If this runs on background, requestImage()
+    // already called awaitAsyncSaveCompletion() on the main thread.
+    if (g != null && !Thread.currentThread().getName().startsWith(REQUEST_IMAGE_THREAD_PREFIX)) {
       g.awaitAsyncSaveCompletion(filename);
     }
 
@@ -5393,14 +5511,16 @@ public class PApplet implements PConstants {
       int dot = filename.lastIndexOf('.');
       if (dot == -1) {
         extension = "unknown";  // no extension found
-      }
-      extension = lower.substring(dot + 1);
 
-      // check for, and strip any parameters on the url, i.e.
-      // filename.jpg?blah=blah&something=that
-      int question = extension.indexOf('?');
-      if (question != -1) {
-        extension = extension.substring(0, question);
+      } else {
+        extension = lower.substring(dot + 1);
+
+        // check for, and strip any parameters on the url, i.e.
+        // filename.jpg?blah=blah&something=that
+        int question = extension.indexOf('?');
+        if (question != -1) {
+          extension = extension.substring(0, question);
+        }
       }
     }
 
@@ -5510,8 +5630,12 @@ public class PApplet implements PConstants {
   }
 
 
+  static private final String REQUEST_IMAGE_THREAD_PREFIX = "requestImage";
+  // fixed-size thread pool used by requestImage()
+  ExecutorService requestImagePool;
+
+
   public PImage requestImage(String filename) {
-//    return requestImage(filename, null, null);
     return requestImage(filename, null);
   }
 
@@ -5545,62 +5669,17 @@ public class PApplet implements PConstants {
       g.awaitAsyncSaveCompletion(filename);
     }
     PImage vessel = createImage(0, 0, ARGB);
-    AsyncImageLoader ail =
-      new AsyncImageLoader(filename, extension, vessel);
-    ail.start();
-    return vessel;
-  }
 
-
-//  /**
-//   * @nowebref
-//   */
-//  public PImage requestImage(String filename, String extension, Object params) {
-//    PImage vessel = createImage(0, 0, ARGB, params);
-//    AsyncImageLoader ail =
-//      new AsyncImageLoader(filename, extension, vessel);
-//    ail.start();
-//    return vessel;
-//  }
-
-
-  /**
-   * By trial and error, four image loading threads seem to work best when
-   * loading images from online. This is consistent with the number of open
-   * connections that web browsers will maintain. The variable is made public
-   * (however no accessor has been added since it's esoteric) if you really
-   * want to have control over the value used. For instance, when loading local
-   * files, it might be better to only have a single thread (or two) loading
-   * images so that you're disk isn't simply jumping around.
-   */
-  public int requestImageMax = 4;
-  volatile int requestImageCount;
-
-  private static final String ASYNC_IMAGE_LOADER_THREAD_PREFIX = "ASYNC_IMAGE_LOADER";
-
-  class AsyncImageLoader extends Thread {
-    String filename;
-    String extension;
-    PImage vessel;
-
-    public AsyncImageLoader(String filename, String extension, PImage vessel) {
-      // Give these threads distinct name so we can check whether we are loading
-      // on the main/background thread; for now they are all named the same
-      super(ASYNC_IMAGE_LOADER_THREAD_PREFIX);
-      this.filename = filename;
-      this.extension = extension;
-      this.vessel = vessel;
+    // if the image loading thread pool hasn't been created, create it
+    if (requestImagePool == null) {
+      ThreadFactory factory = new ThreadFactory() {
+        public Thread newThread(Runnable r) {
+          return new Thread(r, REQUEST_IMAGE_THREAD_PREFIX);
+        }
+      };
+      requestImagePool = Executors.newFixedThreadPool(4, factory);
     }
-
-    @Override
-    public void run() {
-      while (requestImageCount == requestImageMax) {
-        try {
-          Thread.sleep(10);
-        } catch (InterruptedException e) { }
-      }
-      requestImageCount++;
-
+    requestImagePool.execute(() -> {
       PImage actual = loadImage(filename, extension);
 
       // An error message should have already printed
@@ -5618,29 +5697,9 @@ public class PApplet implements PConstants {
         vessel.pixelHeight = actual.height;
         vessel.pixelDensity = 1;
       }
-      requestImageCount--;
-    }
+    });
+    return vessel;
   }
-
-
-  // done internally by ImageIcon
-//  /**
-//   * Load an AWT image synchronously by setting up a MediaTracker for
-//   * a single image, and blocking until it has loaded.
-//   */
-//  protected PImage loadImageMT(Image awtImage) {
-//    MediaTracker tracker = new MediaTracker(this);
-//    tracker.addImage(awtImage, 0);
-//    try {
-//      tracker.waitForAll();
-//    } catch (InterruptedException e) {
-//      //e.printStackTrace();  // non-fatal, right?
-//    }
-//
-//    PImage image = new PImage(awtImage);
-//    image.parent = this;
-//    return image;
-//  }
 
 
   /**
@@ -5933,7 +5992,11 @@ public class PApplet implements PConstants {
    */
   public XML loadXML(String filename, String options) {
     try {
-      return new XML(createReader(filename), options);
+      BufferedReader reader = createReader(filename);
+      if (reader != null) {
+        return new XML(reader, options);
+      }
+      return null;
 
       // can't use catch-all exception, since it might catch the
       // RuntimeException about the incorrect case sensitivity
@@ -6013,12 +6076,31 @@ public class PApplet implements PConstants {
    * @see PApplet#saveJSONArray(JSONArray, String)
    */
   public JSONObject loadJSONObject(String filename) {
-    return new JSONObject(createReader(filename));
+    // can't pass of createReader() to the constructor b/c of resource leak
+    BufferedReader reader = createReader(filename);
+    JSONObject outgoing = new JSONObject(reader);
+    try {
+      reader.close();
+    } catch (IOException e) {  // not sure what would cause this
+      e.printStackTrace();
+    }
+    return outgoing;
   }
 
 
+  /**
+   * @nowebref
+   */
   static public JSONObject loadJSONObject(File file) {
-    return new JSONObject(createReader(file));
+    // can't pass of createReader() to the constructor b/c of resource leak
+    BufferedReader reader = createReader(file);
+    JSONObject outgoing = new JSONObject(reader);
+    try {
+      reader.close();
+    } catch (IOException e) {  // not sure what would cause this
+      e.printStackTrace();
+    }
+    return outgoing;
   }
 
 
@@ -6035,6 +6117,7 @@ public class PApplet implements PConstants {
   public boolean saveJSONObject(JSONObject json, String filename) {
     return saveJSONObject(json, filename, null);
   }
+
 
   /**
    * @param options "compact" and "indent=N", replace N with the number of spaces
@@ -6064,12 +6147,28 @@ public class PApplet implements PConstants {
    * @see PApplet#saveJSONArray(JSONArray, String)
    */
   public JSONArray loadJSONArray(String filename) {
-    return new JSONArray(createReader(filename));
+    // can't pass of createReader() to the constructor b/c of resource leak
+    BufferedReader reader = createReader(filename);
+    JSONArray outgoing = new JSONArray(reader);
+    try {
+      reader.close();
+    } catch (IOException e) {  // not sure what would cause this
+      e.printStackTrace();
+    }
+    return outgoing;
   }
 
 
   static public JSONArray loadJSONArray(File file) {
-    return new JSONArray(createReader(file));
+    // can't pass of createReader() to the constructor b/c of resource leak
+    BufferedReader reader = createReader(file);
+    JSONArray outgoing = new JSONArray(reader);
+    try {
+      reader.close();
+    } catch (IOException e) {  // not sure what would cause this
+      e.printStackTrace();
+    }
+    return outgoing;
   }
 
 
@@ -6250,18 +6349,6 @@ public class PApplet implements PConstants {
           "to the data folder of your sketch.", e);
     }
     return null;
-  }
-
-
-  /**
-   * Used by PGraphics to remove the requirement for loading a font!
-   */
-  protected PFont createDefaultFont(float size) {
-//    Font f = new Font("SansSerif", Font.PLAIN, 12);
-//    println("n: " + f.getName());
-//    println("fn: " + f.getFontName());
-//    println("ps: " + f.getPSName());
-    return createFont("Lucida Sans", size, true, null);
   }
 
 
@@ -7245,10 +7332,10 @@ public class PApplet implements PConstants {
       // If this looks like a URL, try to load it that way. Use the fact that
       // URL connections may have a content length header to size the array.
       if (filename.contains(":")) {  // at least smells like URL
+        InputStream input = null;
         try {
           URL url = new URL(filename);
           URLConnection conn = url.openConnection();
-          InputStream input = null;
           int length = -1;
 
           if (conn instanceof HttpURLConnection) {
@@ -7294,6 +7381,15 @@ public class PApplet implements PConstants {
         } catch (IOException e) {
           printStackTrace(e);
           return null;
+
+        } finally {
+          if (input != null) {
+            try {
+              input.close();
+            } catch (IOException e) {
+              // just deal
+            }
+          }
         }
       }
     }
@@ -7715,6 +7811,9 @@ public class PApplet implements PConstants {
    */
   static private File createTempFile(File file) throws IOException {
     File parentDir = file.getParentFile();
+    if (!parentDir.exists()) {
+      parentDir.mkdirs();
+    }
     String name = file.getName();
     String prefix;
     String suffix = null;
@@ -8245,10 +8344,10 @@ public class PApplet implements PConstants {
     System.arraycopy(src, 0, dst, 0, Array.getLength(src));
   }
 
-  //
   /**
-   * @deprecated Use arrayCopy() instead.
+   * Use arrayCopy() instead.
    */
+  @Deprecated
   static public void arraycopy(Object src, int srcPosition,
                                Object dst, int dstPosition,
                                int length) {
@@ -8256,18 +8355,21 @@ public class PApplet implements PConstants {
   }
 
   /**
-   * @deprecated Use arrayCopy() instead.
+   * Use arrayCopy() instead.
    */
+  @Deprecated
   static public void arraycopy(Object src, Object dst, int length) {
     System.arraycopy(src, 0, dst, 0, length);
   }
 
   /**
-   * @deprecated Use arrayCopy() instead.
+   * Use arrayCopy() instead.
    */
+  @Deprecated
   static public void arraycopy(Object src, Object dst) {
     System.arraycopy(src, 0, dst, 0, Array.getLength(src));
   }
+
 
   /**
    * ( begin auto-generated from expand.xml )
@@ -8655,9 +8757,11 @@ public class PApplet implements PConstants {
     return outgoing;
   }
 
-  static public boolean[] subset(boolean list[], int start) {
+
+  static public boolean[] subset(boolean[] list, int start) {
     return subset(list, start, list.length - start);
   }
+
 
  /**
    * ( begin auto-generated from subset.xml )
@@ -8681,60 +8785,92 @@ public class PApplet implements PConstants {
   * @param count number of values to extract
   * @see PApplet#splice(boolean[], boolean, int)
   */
-  static public boolean[] subset(boolean list[], int start, int count) {
-    boolean output[] = new boolean[count];
-    System.arraycopy(list, start, output, 0, count);
-    return output;
-  }
-
-  static public byte[] subset(byte list[], int start) {
-    return subset(list, start, list.length - start);
-  }
-
-  static public byte[] subset(byte list[], int start, int count) {
-    byte output[] = new byte[count];
+  static public boolean[] subset(boolean[] list, int start, int count) {
+    boolean[] output = new boolean[count];
     System.arraycopy(list, start, output, 0, count);
     return output;
   }
 
 
-  static public char[] subset(char list[], int start) {
+  static public byte[] subset(byte[] list, int start) {
     return subset(list, start, list.length - start);
   }
 
-  static public char[] subset(char list[], int start, int count) {
-    char output[] = new char[count];
-    System.arraycopy(list, start, output, 0, count);
-    return output;
-  }
 
-  static public int[] subset(int list[], int start) {
-    return subset(list, start, list.length - start);
-  }
-
-  static public int[] subset(int list[], int start, int count) {
-    int output[] = new int[count];
-    System.arraycopy(list, start, output, 0, count);
-    return output;
-  }
-
-  static public float[] subset(float list[], int start) {
-    return subset(list, start, list.length - start);
-  }
-
-  static public float[] subset(float list[], int start, int count) {
-    float output[] = new float[count];
+  static public byte[] subset(byte[] list, int start, int count) {
+    byte[] output = new byte[count];
     System.arraycopy(list, start, output, 0, count);
     return output;
   }
 
 
-  static public String[] subset(String list[], int start) {
+  static public char[] subset(char[] list, int start) {
     return subset(list, start, list.length - start);
   }
 
-  static public String[] subset(String list[], int start, int count) {
-    String output[] = new String[count];
+
+  static public char[] subset(char[] list, int start, int count) {
+    char[] output = new char[count];
+    System.arraycopy(list, start, output, 0, count);
+    return output;
+  }
+
+
+  static public int[] subset(int[] list, int start) {
+    return subset(list, start, list.length - start);
+  }
+
+
+  static public int[] subset(int[] list, int start, int count) {
+    int[] output = new int[count];
+    System.arraycopy(list, start, output, 0, count);
+    return output;
+  }
+
+
+  static public long[] subset(long[] list, int start) {
+    return subset(list, start, list.length - start);
+  }
+
+
+  static public long[] subset(long[] list, int start, int count) {
+    long[] output = new long[count];
+    System.arraycopy(list, start, output, 0, count);
+    return output;
+  }
+
+
+  static public float[] subset(float[] list, int start) {
+    return subset(list, start, list.length - start);
+  }
+
+
+  static public float[] subset(float[] list, int start, int count) {
+    float[] output = new float[count];
+    System.arraycopy(list, start, output, 0, count);
+    return output;
+  }
+
+
+  static public double[] subset(double[] list, int start) {
+    return subset(list, start, list.length - start);
+  }
+
+
+  static public double[] subset(double[] list, int start, int count) {
+    double[] output = new double[count];
+    System.arraycopy(list, start, output, 0, count);
+    return output;
+  }
+
+
+  static public String[] subset(String[] list, int start) {
+    return subset(list, start, list.length - start);
+  }
+
+
+  static public String[] subset(String[] list, int start, int count) {
+    String[] output = new String[count];
     System.arraycopy(list, start, output, 0, count);
     return output;
   }
@@ -8744,6 +8880,7 @@ public class PApplet implements PConstants {
     int length = Array.getLength(list);
     return subset(list, start, length - start);
   }
+
 
   static public Object subset(Object list, int start, int count) {
     Class<?> type = list.getClass().getComponentType();
@@ -9091,7 +9228,7 @@ public class PApplet implements PConstants {
 
 
   static public String[] split(String value, String delim) {
-    ArrayList<String> items = new ArrayList<String>();
+    List<String> items = new ArrayList<>();
     int index;
     int offset = 0;
     while ((index = value.indexOf(delim, offset)) != -1) {
@@ -9216,7 +9353,7 @@ public class PApplet implements PConstants {
   static public String[][] matchAll(String str, String regexp) {
     Pattern p = matchPattern(regexp);
     Matcher m = p.matcher(str);
-    ArrayList<String[]> results = new ArrayList<String[]>();
+    List<String[]> results = new ArrayList<>();
     int count = m.groupCount() + 1;
     while (m.find()) {
       String[] groups = new String[count];
@@ -9624,7 +9761,7 @@ public class PApplet implements PConstants {
 
   static final public float parseFloat(String what, float otherwise) {
     try {
-      return new Float(what).floatValue();
+      return Float.parseFloat(what);
     } catch (NumberFormatException e) { }
 
     return otherwise;
@@ -9674,7 +9811,7 @@ public class PApplet implements PConstants {
     float output[] = new float[what.length];
     for (int i = 0; i < what.length; i++) {
       try {
-        output[i] = new Float(what[i]).floatValue();
+        output[i] = Float.parseFloat(what[i]);
       } catch (NumberFormatException e) {
         output[i] = missing;
       }
@@ -10621,9 +10758,11 @@ public class PApplet implements PConstants {
           editorLocation = parseInt(split(value, ','));
 
         } else if (param.equals(ARGS_DISPLAY)) {
-          displayNum = parseInt(value, -1);
-          if (displayNum == -1) {
-            System.err.println("Could not parse " + value + " for " + ARGS_DISPLAY);
+          displayNum = parseInt(value, -2);
+          if (displayNum == -2) {
+            // this means the display value couldn't be parsed properly
+            System.err.println(value + " is not a valid choice for " + ARGS_DISPLAY);
+            displayNum = -1;  // use the default
           }
 
         } else if (param.equals(ARGS_WINDOW_COLOR)) {
@@ -10697,7 +10836,7 @@ public class PApplet implements PConstants {
       try {
         Class<?> c =
           Thread.currentThread().getContextClassLoader().loadClass(name);
-        sketch = (PApplet) c.newInstance();
+        sketch = (PApplet) c.getDeclaredConstructor().newInstance();
       } catch (RuntimeException re) {
         // Don't re-package runtime exceptions
         throw re;
@@ -12021,6 +12160,31 @@ public class PApplet implements PConstants {
 
 
   /**
+   * ( begin auto-generated from square.xml )
+   *
+   * Draws a square to the screen. A square is a four-sided shape with 
+   * every angle at ninety degrees and each side is the same length. 
+   * By default, the first two parameters set the location of the 
+   * upper-left corner, the third sets the width and height. The way 
+   * these parameters are interpreted, however, may be changed with the 
+   * <b>rectMode()</b> function.
+   *
+   * ( end auto-generated )
+   *
+   * @webref shape:2d_primitives
+   * @param x x-coordinate of the rectangle by default
+   * @param y y-coordinate of the rectangle by default
+   * @param extent width and height of the rectangle by default
+   * @see PGraphics#rect(float, float, float, float)
+   * @see PGraphics#rectMode(int)
+   */
+  public void square(float x, float y, float extent) {
+    if (recorder != null) recorder.square(x, y, extent);
+    g.square(x, y, extent);
+  }
+
+
+  /**
    * ( begin auto-generated from ellipseMode.xml )
    *
    * The origin of the ellipse is modified by the <b>ellipseMode()</b>
@@ -12105,6 +12269,28 @@ public class PApplet implements PConstants {
                   float start, float stop, int mode) {
     if (recorder != null) recorder.arc(a, b, c, d, start, stop, mode);
     g.arc(a, b, c, d, start, stop, mode);
+  }
+
+
+  /**
+   * ( begin auto-generated from circle.xml )
+   *
+   * Draws a circle to the screen. By default, the first two parameters 
+   * set the location of the center, and the third sets the shape's width 
+   * and height. The origin may be changed with the <b>ellipseMode()</b> 
+   * function.
+   *
+   * ( end auto-generated )
+   * @webref shape:2d_primitives
+   * @param x x-coordinate of the ellipse
+   * @param y y-coordinate of the ellipse
+   * @param extent width and height of the ellipse by default
+   * @see PApplet#ellipse(float, float, float, float)
+   * @see PApplet#ellipseMode(int)
+   */
+  public void circle(float x, float y, float extent) {
+    if (recorder != null) recorder.circle(x, y, extent);
+    g.circle(x, y, extent);
   }
 
 
@@ -13127,6 +13313,82 @@ public class PApplet implements PConstants {
   public void text(float num, float x, float y, float z) {
     if (recorder != null) recorder.text(num, x, y, z);
     g.text(num, x, y, z);
+  }
+
+
+  /**
+   * ( begin auto-generated from push.xml )
+   *
+   * The <b>push()</b> function saves the current drawing style 
+   * settings and transformations, while <b>pop()</b> restores these 
+   * settings. Note that these functions are always used together. 
+   * They allow you to change the style and transformation settings 
+   * and later return to what you had. When a new state is started 
+   * with push(), it builds on the current style and transform 
+   * information.<br />
+   * <br />
+   * <b>push()</b> stores information related to the current 
+   * transformation state and style settings controlled by the 
+   * following functions: <b>rotate()</b>, <b>translate()</b>, 
+   * <b>scale()</b>, <b>fill()</b>, <b>stroke()</b>, <b>tint()</b>, 
+   * <b>strokeWeight()</b>, <b>strokeCap()</b>, <b>strokeJoin()</b>, 
+   * <b>imageMode()</b>, <b>rectMode()</b>, <b>ellipseMode()</b>, 
+   * <b>colorMode()</b>, <b>textAlign()</b>, <b>textFont()</b>, 
+   * <b>textMode()</b>, <b>textSize()</b>, <b>textLeading()</b>.<br />
+   * <br />
+   * The <b>push()</b> and <b>pop()</b> functions were added with 
+   * Processing 3.5. They can be used in place of <b>pushMatrix()</b>, 
+   * <b>popMatrix()</b>, <b>pushStyles()</b>, and <b>popStyles()</b>. 
+   * The difference is that push() and pop() control both the 
+   * transformations (rotate, scale, translate) and the drawing styles 
+   * at the same time.
+   *
+   * ( end auto-generated )
+   *
+   * @webref structure
+   * @see PGraphics#pop()
+   */
+  public void push() {
+    if (recorder != null) recorder.push();
+    g.push();
+  }
+
+
+  /**
+   * ( begin auto-generated from pop.xml )
+   *
+   * The <b>pop()</b> function restores the previous drawing style 
+   * settings and transformations after <b>push()</b> has changed them. 
+   * Note that these functions are always used together. They allow 
+   * you to change the style and transformation settings and later 
+   * return to what you had. When a new state is started with push(), 
+   * it builds on the current style and transform information.<br />
+   * <br />
+   * <br />
+   * <b>push()</b> stores information related to the current 
+   * transformation state and style settings controlled by the 
+   * following functions: <b>rotate()</b>, <b>translate()</b>, 
+   * <b>scale()</b>, <b>fill()</b>, <b>stroke()</b>, <b>tint()</b>, 
+   * <b>strokeWeight()</b>, <b>strokeCap()</b>, <b>strokeJoin()</b>, 
+   * <b>imageMode()</b>, <b>rectMode()</b>, <b>ellipseMode()</b>, 
+   * <b>colorMode()</b>, <b>textAlign()</b>, <b>textFont()</b>, 
+   * <b>textMode()</b>, <b>textSize()</b>, <b>textLeading()</b>.<br />
+   * <br />
+   * The <b>push()</b> and <b>pop()</b> functions were added with 
+   * Processing 3.5. They can be used in place of <b>pushMatrix()</b>, 
+   * <b>popMatrix()</b>, <b>pushStyles()</b>, and <b>popStyles()</b>. 
+   * The difference is that push() and pop() control both the 
+   * transformations (rotate, scale, translate) and the drawing styles 
+   * at the same time.
+   *
+   * ( end auto-generated )
+   *
+   * @webref structure
+   * @see PGraphics#push()
+   */
+  public void pop() {
+    if (recorder != null) recorder.pop();
+    g.pop();
   }
 
 

@@ -53,8 +53,7 @@ public abstract class Mode {
   protected File folder;
 
   protected TokenMarker tokenMarker;
-  protected Map<String, String> keywordToReference =
-    new HashMap<String, String>();
+  protected Map<String, String> keywordToReference = new HashMap<>();
 
   protected Settings theme;
 //  protected Formatter formatter;
@@ -210,6 +209,14 @@ public abstract class Mode {
       if (modeTheme.exists()) {
         // Override the built-in settings with what the theme provides
         theme.load(modeTheme);
+      }
+
+      // Against my better judgment, adding the ability to override themes
+      // https://github.com/processing/processing/issues/5445
+      File sketchbookTheme =
+        new File(Base.getSketchbookFolder(), "theme.txt");
+      if (sketchbookTheme.exists()) {
+        theme.load(sketchbookTheme);
       }
 
       // other things that have to be set explicitly for the defaults
@@ -598,7 +605,7 @@ public abstract class Mode {
       contrib.setEnabled(false);
       importMenu.add(contrib);
 
-      HashMap<String, JMenu> subfolders = new HashMap<String, JMenu>();
+      HashMap<String, JMenu> subfolders = new HashMap<>();
 
       for (Library library : contribLibraries) {
         JMenuItem item = new JMenuItem(library.getName());

@@ -3,6 +3,7 @@ package processing.data;
 import java.io.*;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 
 import processing.core.PApplet;
 
@@ -23,7 +24,7 @@ public class IntDict {
   protected int[] values;
 
   /** Internal implementation for faster lookups */
-  private HashMap<String, Integer> indices = new HashMap<String, Integer>();
+  private HashMap<String, Integer> indices = new HashMap<>();
 
 
   public IntDict() {
@@ -117,6 +118,29 @@ public class IntDict {
 
 
   /**
+   * Resize the internal data, this can only be used to shrink the list.
+   * Helpful for situations like sorting and then grabbing the top 50 entries.
+   */
+  public void resize(int length) {
+    if (length > count) {
+      throw new IllegalArgumentException("resize() can only be used to shrink the dictionary");
+    }
+    if (length < 1) {
+      throw new IllegalArgumentException("resize(" + length + ") is too small, use 1 or higher");
+    }
+
+    String[] newKeys = new String[length];
+    int[] newValues = new int[length];
+    PApplet.arrayCopy(keys, newKeys, length);
+    PApplet.arrayCopy(values, newValues, length);
+    keys = newKeys;
+    values = newValues;
+    count = length;
+    resetIndices();
+  }
+
+
+  /**
    * Remove all entries.
    *
    * @webref intdict:method
@@ -124,7 +148,15 @@ public class IntDict {
    */
   public void clear() {
     count = 0;
-    indices = new HashMap<String, Integer>();
+    indices = new HashMap<>();
+  }
+
+
+  private void resetIndices() {
+    indices = new HashMap<>(count);
+    for (int i = 0; i < count; i++) {
+      indices.put(keys[i], i);
+    }
   }
 
 
@@ -162,8 +194,8 @@ public class IntDict {
       }
 
       public Entry next() {
+        ++index;
         Entry e = new Entry(keys[index], values[index]);
-        index++;
         return e;
       }
 
@@ -347,6 +379,16 @@ public class IntDict {
       values[index] = amount;
     }
   }
+
+
+  public void setIndex(int index, String key, int value) {
+    if (index < 0 || index >= count) {
+      throw new ArrayIndexOutOfBoundsException(index);
+    }
+    keys[index] = key;
+    values[index] = value;
+  }
+
 
   /**
    * @webref intdict:method
@@ -552,19 +594,20 @@ public class IntDict {
    */
   public int remove(String key) {
     int index = index(key);
-    if (index != -1) {
-      removeIndex(index);
+    if (index == -1) {
+      throw new NoSuchElementException("'" + key + "' not found");
     }
-    return index;
+    int value = values[index];
+    removeIndex(index);
+    return value;
   }
 
 
-  public String removeIndex(int index) {
+  public int removeIndex(int index) {
     if (index < 0 || index >= count) {
       throw new ArrayIndexOutOfBoundsException(index);
     }
-    //System.out.println("index is " + which + " and " + keys[which]);
-    String key = keys[index];
+    int value = values[index];
     indices.remove(keys[index]);
     for (int i = index; i < count-1; i++) {
       keys[i] = keys[i+1];
@@ -574,7 +617,7 @@ public class IntDict {
     count--;
     keys[count] = null;
     values[count] = 0;
-    return key;
+    return value;
   }
 
 
@@ -660,7 +703,7 @@ public class IntDict {
       }
 
       @Override
-      public float compare(int a, int b) {
+      public int compare(int a, int b) {
         int diff = 0;
         if (useKeys) {
           diff = keys[a].compareToIgnoreCase(keys[b]);
@@ -684,10 +727,7 @@ public class IntDict {
     s.run();
 
     // Set the indices after sort/swaps (performance fix 160411)
-    indices = new HashMap<String, Integer>();
-    for (int i = 0; i < count; i++) {
-      indices.put(keys[i], i);
-    }
+    resetIndices();
   }
 
 
@@ -728,8 +768,17 @@ public class IntDict {
 
 
   /**
-   * Write tab-delimited entries out to
-   * @param writer
+   * Save tab-delimited entries to a file (TSV format, UTF-8 encoding)
+   */
+  public void save(File file) {
+    PrintWriter writer = PApplet.createWriter(file);
+    write(writer);
+    writer.close();
+  }
+
+
+  /**
+   * Write tab-delimited entries to a PrintWriter
    */
   public void write(PrintWriter writer) {
     for (int i = 0; i < count; i++) {

@@ -162,12 +162,11 @@ public class Util {
    * Spew the contents of a String object out to a file. As of 3.0 beta 2,
    * this will replace and write \r\n for newlines on Windows.
    * https://github.com/processing/processing/issues/3455
+   * As of 3.3.7, this puts a newline at the end of the file,
+   * per good practice/POSIX: https://stackoverflow.com/a/729795
    */
-  static public void saveFile(String str, File file) throws IOException {
-    if (Platform.isWindows()) {
-      String[] lines = str.split("\\r?\\n");
-      str = PApplet.join(lines, "\r\n");
-    }
+  static public void saveFile(String text, File file) throws IOException {
+    String[] lines = text.split("\\r?\\n");
     File temp = File.createTempFile(file.getName(), null, file.getParentFile());
     try {
       // fix from cjwant to prevent symlinks from being destroyed.
@@ -178,9 +177,11 @@ public class Util {
       throw new IOException("Could not resolve canonical representation of " +
                             file.getAbsolutePath());
     }
-    // Can't use saveStrings() here b/c Windows will add a ^M to the file
+    // Could use saveStrings(), but the we wouldn't be able to checkError()
     PrintWriter writer = PApplet.createWriter(temp);
-    writer.print(str);
+    for (String line : lines) {
+      writer.println(line);
+    }
     boolean error = writer.checkError();  // calls flush()
     writer.close();  // attempt to close regardless
     if (error) {
@@ -558,15 +559,14 @@ public class Util {
         if (!entry.isDirectory()) {
           String name = entry.getName();
 
-          if (name.endsWith(".class")) {
+          // Avoid META-INF because some jokers but .class files in there
+          // https://github.com/processing/processing/issues/5778
+          if (name.endsWith(".class") && !name.startsWith("META-INF/")) {
             int slash = name.lastIndexOf('/');
-            if (slash == -1) continue;
-
-            String pname = name.substring(0, slash);
-//            if (map.get(pname) == null) {
-//              map.put(pname, new Object());
-//            }
-            list.appendUnique(pname);
+            if (slash != -1) {
+              String packageName = name.substring(0, slash);
+              list.appendUnique(packageName);
+            }
           }
         }
       }

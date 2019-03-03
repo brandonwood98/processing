@@ -1,7 +1,8 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyright (c) 2005-11 Ben Fry and Casey Reas
+  Copyright (c) 2005-12 Ben Fry and Casey Reas
+  Copyright (c) 2012-18 The Processing Foundation
 
   This library is free software; you can redistribute it and/or
   modify it under the terms of the GNU Lesser General Public
@@ -546,6 +547,14 @@ public class PGraphicsPDF extends PGraphicsJava2D {
 
   public void filter(int kind, float param) {
     nope("filter");
+  }
+
+  //
+
+  protected void blendModeImpl() {
+    if (blendMode != REPLACE && blendMode != BLEND) {
+      showMissingWarning("blendMode");
+    }
   }
 
   //

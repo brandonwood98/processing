@@ -21,6 +21,7 @@ import processing.data.StringList;
 import processing.app.*;
 import processing.app.contrib.*;
 import processing.app.syntax.JEditTextArea;
+import processing.app.syntax.PdeTextArea;
 import processing.app.syntax.PdeTextAreaDefaults;
 import processing.app.ui.*;
 import processing.app.ui.Toolkit;
@@ -311,17 +312,17 @@ public class JavaEditor extends Editor {
 
       @Override
       public void menuSelected(MenuEvent e) {
-        boolean isCoreLibMenuItemAdded = false;
-        boolean isContribLibMenuItemAdded = false;
-
         // Adding this in case references are included in a core library,
-        // or other core libraries are incuded in future
-        isCoreLibMenuItemAdded = addLibReferencesToSubMenu(mode.coreLibraries, libRefSubmenu);
+        // or other core libraries are included in the future
+        boolean isCoreLibMenuItemAdded =
+          addLibReferencesToSubMenu(mode.coreLibraries, libRefSubmenu);
 
-        if (isCoreLibMenuItemAdded && !mode.contribLibraries.isEmpty())
+        if (isCoreLibMenuItemAdded && !mode.contribLibraries.isEmpty()) {
           libRefSubmenu.addSeparator();
+        }
 
-        isContribLibMenuItemAdded = addLibReferencesToSubMenu(mode.contribLibraries, libRefSubmenu);
+        boolean isContribLibMenuItemAdded =
+          addLibReferencesToSubMenu(mode.contribLibraries, libRefSubmenu);
 
         if (!isContribLibMenuItemAdded && !isCoreLibMenuItemAdded) {
           JMenuItem emptyMenuItem = new JMenuItem(Language.text("menu.help.empty"));
@@ -329,8 +330,8 @@ public class JavaEditor extends Editor {
           emptyMenuItem.setFocusable(false);
           emptyMenuItem.setFocusPainted(false);
           libRefSubmenu.add(emptyMenuItem);
-        }
-        else if (!isContribLibMenuItemAdded && !mode.coreLibraries.isEmpty()) {
+
+        } else if (!isContribLibMenuItemAdded && !mode.coreLibraries.isEmpty()) {
           //re-populate the menu to get rid of terminal separator
           libRefSubmenu.removeAll();
           addLibReferencesToSubMenu(mode.coreLibraries, libRefSubmenu);
@@ -1093,10 +1094,11 @@ public class JavaEditor extends Editor {
         synchronized (runtimeLock) {
           if (runtimeLaunchRequested) {
             runtimeLaunchRequested = false;
+            RunnerListener listener = new RunnerListenerEdtAdapter(JavaEditor.this);
             if (!tweak) {
-              runtime = jmode.handleLaunch(sketch, JavaEditor.this, present);
+              runtime = jmode.handleLaunch(sketch, listener, present);
             } else {
-              runtime = jmode.handleTweak(sketch, JavaEditor.this);
+              runtime = jmode.handleTweak(sketch, listener);
             }
           }
         }
@@ -1382,7 +1384,7 @@ public class JavaEditor extends Editor {
 //      });
 //    debugMenu.add(item);
 
-    item = Toolkit.newJMenuItem(Language.text("menu.debug.step"), KeyEvent.VK_J);
+    item = Toolkit.newJMenuItemExt("menu.debug.step");
     item.addActionListener(new ActionListener() {
       public void actionPerformed(ActionEvent e) {
         handleStep(0);
@@ -1391,7 +1393,7 @@ public class JavaEditor extends Editor {
     debugMenu.add(item);
     item.setEnabled(false);
 
-    item = Toolkit.newJMenuItemShift(Language.text("menu.debug.step_into"), KeyEvent.VK_J);
+    item = Toolkit.newJMenuItemExt("menu.debug.step_into");
     item.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
           handleStep(ActionEvent.SHIFT_MASK);
@@ -1400,7 +1402,7 @@ public class JavaEditor extends Editor {
     debugMenu.add(item);
     item.setEnabled(false);
 
-    item = Toolkit.newJMenuItemAlt(Language.text("menu.debug.step_out"), KeyEvent.VK_J);
+    item = Toolkit.newJMenuItemExt("menu.debug.step_out");
     item.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
           handleStep(ActionEvent.ALT_MASK);
@@ -2078,7 +2080,7 @@ public class JavaEditor extends Editor {
     cursorToLineStart(line.lineIdx());
     // highlight line
     currentLine = new LineHighlight(line.lineIdx(), this);
-    currentLine.setMarker(JavaTextArea.STEP_MARKER);
+    currentLine.setMarker(PdeTextArea.STEP_MARKER);
     currentLine.setPriority(10); // fixes current line being hidden by the breakpoint when moved down
   }
 
@@ -2107,7 +2109,7 @@ public class JavaEditor extends Editor {
    */
   public void addBreakpointedLine(LineID lineID) {
     LineHighlight hl = new LineHighlight(lineID, this);
-    hl.setMarker(JavaTextArea.BREAK_MARKER);
+    hl.setMarker(PdeTextArea.BREAK_MARKER);
     breakpointedLines.add(hl);
     // repaint current line if it's on this line
     if (currentLine != null && currentLine.getLineID().equals(lineID)) {
@@ -2350,7 +2352,7 @@ public class JavaEditor extends Editor {
     frmImportSuggest = new JFrame();
 
     frmImportSuggest.setUndecorated(true);
-    frmImportSuggest.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+    frmImportSuggest.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
     JPanel panel = new JPanel();
     panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
     panel.setBackground(Color.WHITE);

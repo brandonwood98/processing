@@ -594,8 +594,7 @@ public class JEditTextArea extends JComponent
   public int yToLine(int y) {
     FontMetrics fm = painter.getFontMetrics();
     int height = fm.getHeight();
-    return Math.max(0,Math.min(getLineCount() - 1,
-        y / height + firstLine));
+    return Math.max(0, Math.min(getLineCount() - 1, y / height + firstLine));
   }
 
 
@@ -1033,8 +1032,10 @@ public class JEditTextArea extends JComponent
     try {
       document.getText(start,len,segment);
 
-    } catch(BadLocationException bl) {
+    } catch (BadLocationException bl) {
       bl.printStackTrace();
+      System.err.format("Bad Location: %d for start %d and length %d",
+                        bl.offsetRequested(), start, len);
       segment.offset = segment.count = 0;
     }
   }
@@ -1580,13 +1581,14 @@ public class JEditTextArea extends JComponent
       Clipboard clipboard = getToolkit().getSystemClipboard();
 
       String selection = getSelectedText();
+      if (selection != null) {
+        int repeatCount = inputHandler.getRepeatCount();
+        StringBuilder sb = new StringBuilder();
+        for(int i = 0; i < repeatCount; i++)
+          sb.append(selection);
 
-      int repeatCount = inputHandler.getRepeatCount();
-      StringBuilder sb = new StringBuilder();
-      for(int i = 0; i < repeatCount; i++)
-        sb.append(selection);
-
-      clipboard.setContents(new StringSelection(sb.toString()), null);
+        clipboard.setContents(new StringSelection(sb.toString()), null);
+      }
     }
   }
 

@@ -1,5 +1,7 @@
 package processing.data;
 
+import java.io.File;
+import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Random;
@@ -692,8 +694,9 @@ public class FloatList implements Iterable<Float> {
       }
 
       @Override
-      public float compare(int a, int b) {
-        return data[b] - data[a];
+      public int compare(int a, int b) {
+        float diff = data[b] - data[a];
+        return diff == 0 ? 0 : (diff < 0 ? -1 : 1);
       }
 
       @Override
@@ -894,6 +897,27 @@ public class FloatList implements Iterable<Float> {
     for (int i = 0; i < count; i++) {
       System.out.format("[%d] %f%n", i, data[i]);
     }
+  }
+
+
+  /**
+   * Save tab-delimited entries to a file (TSV format, UTF-8 encoding)
+   */
+  public void save(File file) {
+    PrintWriter writer = PApplet.createWriter(file);
+    write(writer);
+    writer.close();
+  }
+
+
+  /**
+   * Write entries to a PrintWriter, one per line
+   */
+  public void write(PrintWriter writer) {
+    for (int i = 0; i < count; i++) {
+      writer.println(data[i]);
+    }
+    writer.flush();
   }
 
 
